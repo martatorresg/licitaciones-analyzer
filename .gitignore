@@ -1,0 +1,17 @@
+# 🚫 Entorno virtual
+venv/
+
+# 🚫 Claves y configuraciones sensibles
+.env
+
+# 🚫 Archivos temporales
+__pycache__/
+*.pyc
+
+# 🚫 Archivos de sistema (Windows, VSCode, etc.)
+.DS_Store
+Thumbs.db
+.vscode/
+
+# 🚫 Resultados o datos generados
+resultados_*.xlsx
