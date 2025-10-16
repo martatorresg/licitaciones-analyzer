@@ -1,5 +1,6 @@
 # 🚫 Entorno virtual
 venv/
+archivos/
 
 # 🚫 Claves y configuraciones sensibles
 .env
