@@ -2,7 +2,7 @@ import os
 import pandas as pd
 from extractor import extract_licitacion_data
 
-EXCEL_FILE = "resultados_licitaciones_2.xlsx"
+EXCEL_FILE = "resultados_licitaciones_6.xlsx"
 DATA_DIR = "data"
 
 def guardar_en_excel(datos_nuevos: list[dict]):
