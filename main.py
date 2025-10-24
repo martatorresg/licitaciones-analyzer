@@ -1,10 +1,9 @@
 import os
 import pandas as pd
 from extractor import extract_licitacion_data
-from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 
-EXCEL_FILE = "resultados_licitaciones_17.xlsx"
+EXCEL_FILE = "resultados_licitaciones_3.xlsx"
 DATA_DIR = "data"
 
 def guardar_en_excel(datos_nuevos: list[dict]):

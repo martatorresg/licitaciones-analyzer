@@ -1,5 +1,6 @@
 # 🚫 Entorno virtual
 venv/
+venv-lic/
 archivos/
 
 # 🚫 Claves y configuraciones sensibles
