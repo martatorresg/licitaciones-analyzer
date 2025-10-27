@@ -2,6 +2,8 @@
 venv/
 venv-lic/
 archivos/
+data/
+*.pdf
 
 # 🚫 Claves y configuraciones sensibles
 .env
