@@ -5,4 +5,5 @@ python-dotenv
 pandas
 openpyxl
 pinecone>=3.0.0
-
+streamlit
+xlsxwriter

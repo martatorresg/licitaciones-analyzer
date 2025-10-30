@@ -2,7 +2,6 @@ import os
 import json
 import re
 import time
-import textwrap
 from PyPDF2 import PdfReader
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings 
 from langchain_core.prompts import PromptTemplate 
@@ -100,9 +99,7 @@ def a_texto_plano_mejorado(data: dict) -> dict:
             resultado[key] = str(value)
             continue
         
-        # --- OTROS DICCIONARIOS Y LISTAS ---
-        # ❗ En el RAG simple, todo viene como TEXTO PLANO, por lo que estas secciones no deberían aplicarse.
-        # Las dejamos para robustez si el LLM se desvía.
+        # --- ESTRUCTURAS COMPLEJAS: DICCIONARIOS Y LISTAS ---
 
         if isinstance(value, dict):
             # ... (Lógica de Diccionarios original, se mantiene) ...
@@ -150,13 +147,6 @@ def a_texto_plano_mejorado(data: dict) -> dict:
 
     return resultado
 
-
-# ❌ ELIMINAMOS 'combinar_respuestas' ya que en el RAG simple cada campo se extrae una vez.
-# Si el RAG recupera información para el mismo campo de 3 chunks, el LLM fusiona esa información.
-# Si quisiéramos mantenerla, el RAG loop debería modificarse para enviar JSONs parciales,
-# lo que complica la eficiencia. Por eso, optamos por el valor plano.
-
-
 # ==========================================
 # CONFIGURACIÓN LLM Y EMBEDDINGS
 # ==========================================
@@ -170,12 +160,8 @@ llm = ChatGoogleGenerativeAI(
 embeddings = GoogleGenerativeAIEmbeddings(model="text-embedding-004", google_api_key=GOOGLE_API_KEY)
 
 # ==========================================
-# PROMPTS Y REGLAS (ADAPTADAS)
+# PROMPTS Y REGLAS 
 # ==========================================
-
-# ❌ Eliminamos 'prompt_template_chunk' y 'prompt_template_final'
-# ya que el RAG simple los reemplaza con 'prompt_template_rag'.
-
 prompt_template_rag = PromptTemplate(
     input_variables=["campo", "reglas_campo", "document"], # ❗ Añadimos 'reglas_campo' al input
     template=(
@@ -217,7 +203,7 @@ CAMPOS_A_EXTRAER = list(REGLAS_POR_CAMPO.keys()) # Usar las claves del diccionar
 # FUNCIÓN PRINCIPAL RAG
 # ==========================================
 
-def extract_licitacion_data(carpeta_licitacion: str) -> dict:
+def extract_licitacion_data(carpeta_licitacion: str, progress_callback=None) -> dict:
     """Extrae información de los PDFs de una licitación usando RAG."""
     print(f"📁 Procesando carpeta con RAG: {carpeta_licitacion}")
     texto = extraer_texto_pdfs(carpeta_licitacion)
@@ -236,66 +222,87 @@ def extract_licitacion_data(carpeta_licitacion: str) -> dict:
     )
     chunks = text_splitter.split_text(texto)
     print(f"📚 Dividido en {len(chunks)} chunks con Text Splitter.")
-
-    # 2. Indexación (Crear el Vector Store)
-    print("⏳ Creando base de datos vectorial (Chroma)...")
-    # Nota: Chroma guarda los datos en memoria por defecto si no se especifica 'persist_directory'.
-    # Si quieres persistir, añade `persist_directory="./chroma_db"`
-    vectorstore = Chroma.from_texts(
-        texts=chunks,
-        embedding=embeddings,
-        collection_name=os.path.basename(carpeta_licitacion)
-    )
-
-    resultados_rag = {}
-
-    # 3. y 4. Recuperación y Generación (RAG Loop)
-    for campo in CAMPOS_A_EXTRAER:
-        k_value = 1
-        if campo in ["plazo de presentación de la oferta", "documentación por sobre (contenido de sobres)"]:
-            k_value = 2 
-        print(f"🔍 Buscando información para: **{campo}** (k={k_value})")
-        # El campo 'nombre carpeta' se añade al final y no necesita RAG
-        if campo == "nombre carpeta":
-            resultados_rag[campo] = os.path.basename(carpeta_licitacion)
-            continue
-            
-        print(f"🔍 Buscando información para: **{campo}**")
-
-        # 3. Recuperación: Obtener los chunks más relevantes (top 1)
-        retrieved_docs = vectorstore.similarity_search(query=campo, k=k_value)
-        document_content = "\n\n---\n\n".join([doc.page_content for doc in retrieved_docs])
-        
-        if not document_content.strip():
-            print(f"⚠️ No se encontraron documentos relevantes para {campo}. Valor por defecto: (-)")
-            resultados_rag[campo] = "-"
-            continue
-
-        # 4. Generación: Llamar al LLM con el texto relevante.
-        try:
-            reglas = REGLAS_POR_CAMPO.get(campo, "") # Obtener reglas específicas
-            
-            prompt = prompt_template_rag.format(
-                campo=campo,
-                reglas_campo=reglas,
-                document=document_content
+    try:
+        # 2. Indexación (Crear el Vector Store)
+        print("⏳ Creando base de datos vectorial (Chroma)...")
+        # Nota: Chroma guarda los datos en memoria por defecto si no se especifica 'persist_directory'.
+        # Si quieres persistir, añade `persist_directory="./chroma_db"`
+        vectorstore = Chroma.from_texts(
+                texts=chunks,
+                embedding=embeddings,
+                collection_name=os.path.basename(carpeta_licitacion)
             )
+
+        resultados_rag = {}
+
+        # Parámetros para el progreso
+        total_campos = len(CAMPOS_A_EXTRAER)
+
+        # 3. y 4. Recuperación y Generación (RAG Loop)
+        for i, campo in enumerate(CAMPOS_A_EXTRAER): # ❗ USAR enumerate
+            # ❗ ACTUALIZAR LA BARRA DE PROGRESO AL INICIO DEL PROCESAMIENTO DEL CAMPO
+            if progress_callback:
+                progress_callback(i, total_campos, campo)
+
+            k_value = 1
+            if campo in ["plazo de presentación de la oferta", "documentación por sobre (contenido de sobres)"]:
+                k_value = 2
+
+            # El campo 'nombre carpeta' se añade al final y no necesita RAG
+            if campo == "nombre carpeta":
+                resultados_rag[campo] = os.path.basename(carpeta_licitacion)
+                continue
+                
+            # print(f"🔍 Buscando información para: **{campo}** (k={k_value})") # Desactivar para Streamlit
+
+            # 3. Recuperación: Obtener los chunks más relevantes (top k)
+            retrieved_docs = vectorstore.similarity_search(query=campo, k=k_value)
+            document_content = "\n\n---\n\n".join([doc.page_content for doc in retrieved_docs])
             
-            response = llm.invoke(prompt)
-            raw_output = response.content if hasattr(response, "content") else str(response)
+            if not document_content.strip():
+                # print(f"⚠️ No se encontraron documentos relevantes para {campo}. Valor por defecto: (-)") # Desactivar para Streamlit
+                resultados_rag[campo] = "-"
+                continue
+
+            # 4. Generación: Llamar al LLM con el texto relevante.
+            try:
+                reglas = REGLAS_POR_CAMPO.get(campo, "")
+                
+                prompt = prompt_template_rag.format(
+                    campo=campo,
+                    reglas_campo=reglas,
+                    document=document_content
+                )
+                
+                response = llm.invoke(prompt)
+                raw_output = response.content if hasattr(response, "content") else str(response)
+                
+                clean_output = raw_output.strip().replace("```json", "").replace("```", "").strip() 
+                
+                resultados_rag[campo] = clean_output if clean_output else "-"
+                
+            except Exception as e:
+                # print(f"⚠️ Error al generar respuesta para {campo}: {e}") # Desactivar para Streamlit
+                resultados_rag[campo] = f"Error: {e}"
+            time.sleep(1.5) # Pausa para evitar límites de tasa
+            # print("-" * 50) # Desactivar para Streamlit
             
-            # El LLM devuelve el valor plano (string)
-            clean_output = raw_output.strip().replace("```json", "").replace("```", "").strip() 
-            
-            resultados_rag[campo] = clean_output if clean_output else "-"
-            
-        except Exception as e:
-            print(f"⚠️ Error al generar respuesta para {campo}: {e}")
-            resultados_rag[campo] = f"Error: {e}"
-        time.sleep(1.5)  # Pequeña pausa para evitar límites de tasa
-        print("-" * 50)
-    # 5. Limpieza Final (Usa la función original para formatear Cliente, CPV, etc.)
-    resultado_final = resultados_rag
-    
-    # Limpieza final y formateo (cliente, CPV, etc.)
-    return a_texto_plano_mejorado(resultado_final)
+        # ❗ Llamada final para asegurar el 100% en la barra (opcional si la llamada final es fuera del bucle)
+        if progress_callback:
+            progress_callback(total_campos - 1, total_campos, "Completado") 
+
+        # 5. Limpieza Final (Usa la función original para formatear Cliente, CPV, etc.)
+        resultado_final = a_texto_plano_mejorado(resultados_rag)
+    finally:
+            # ❗ PASO CRÍTICO: Eliminar la colección de Chroma de la memoria/disco
+            # Esto debería liberar cualquier bloqueo de archivo que Chroma haya creado.
+            if 'vectorstore' in locals():
+                try:
+                    # Esto fuerza la liberación de recursos si Chroma lo permite
+                    # Para un VectorStore en memoria, esto puede no ser necesario, 
+                    # pero ayuda si se han creado archivos temporales.
+                    del vectorstore 
+                except:
+                    pass
+
+    return resultado_final
