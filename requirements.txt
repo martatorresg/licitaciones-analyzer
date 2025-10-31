@@ -7,4 +7,7 @@ openpyxl
 pinecone>=3.0.0
 streamlit
 xlsxwriter
+chromadb
 PyPDF2
+langchain-core
+langchain-text-splitters
