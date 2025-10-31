@@ -11,3 +11,4 @@ chromadb
 PyPDF2
 langchain-core
 langchain-text-splitters
+langchain-community
