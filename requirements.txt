@@ -7,3 +7,4 @@ openpyxl
 pinecone>=3.0.0
 streamlit
 xlsxwriter
+PyPDF2

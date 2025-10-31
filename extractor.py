@@ -31,10 +31,8 @@ def extraer_texto_pdfs(carpeta: str) -> str:
     return "\n".join(textos)
 
 
-# --- La función 'a_texto_plano_mejorado' es esencial para el formato final y se mantiene. ---
+
 def a_texto_plano_mejorado(data: dict) -> dict:
-    # ... (función existente: se mantiene) ...
-    # NOTA: Asegúrate de que esta función maneje los valores planos (strings) que devuelve RAG LLM.
 
     resultado = {}
 
@@ -50,8 +48,6 @@ def a_texto_plano_mejorado(data: dict) -> dict:
             except:
                 pass # Si no es JSON, se queda como string
 
-        # ... (Resto de la lógica de limpieza para CPV, CLIENTE, etc., se mantiene) ...
-
         # --- CAMPO ESPECIAL: CLASIFICACIÓN CPV ---
         if key.lower() in ["clasificación cpv", "clasificacion cpv"]:
             if isinstance(value, list):
@@ -64,39 +60,11 @@ def a_texto_plano_mejorado(data: dict) -> dict:
                 resultado[key] = "\n".join([f"{v}" if v.startswith('-') else f"- {v}" for v in cpvs])
             continue
 
-        # --- CAMPO ESPECIAL: CLIENTE ---
-        # ❗ EL LLM RAG debería devolver un TEXTO PLANO. Adaptamos para re-parsear si el texto plano sigue el formato Entidad: X\nResponsable: Y
+        # --- CAMPO ESPECIAL: CLIENTE (MODIFICADO) ---
+        # ❗ Ahora solo se espera el nombre de la entidad como string plano (sin subcampos).
         if key.lower() == "cliente":
-            if isinstance(value, str):
-                # Intentar parsear el string plano del LLM a un dict temporal
-                temp_dict = {}
-                for line in value.split('\n'):
-                    if ':' in line:
-                        k, v = line.split(':', 1)
-                        temp_dict[k.strip()] = v.strip()
-                value = temp_dict
-            
-            if isinstance(value, dict):
-                # El resto de la lógica de limpieza de cliente (la original)
-                campos_orden = ["Entidad", "Responsable", "Forma de contacto", "Teléfono", "Fax", "Correo Electrónico", "Sitio Web", "Sede Electrónica"]
-                lineas_cliente = []
-                for campo in campos_orden:
-                    subvalor = value.get(campo) or value.get(campo.lower()) # Manejar posibles minúsculas
-                    if not subvalor: continue
-
-                    subvalor_str = str(subvalor) # Simplemente convertir a string para el RAG simple
-                    
-                    # Pequeña mejora para Responsable si es solo un string de nombres/cargos
-                    if campo == "Responsable" and subvalor_str.lower().startswith('entidad:'):
-                        continue # Evitar duplicados si el LLM repitió la estructura
-                    
-                    lineas_cliente.append(f"{campo}: {subvalor_str}")
-
-                resultado[key] = "\n".join(lineas_cliente)
-                continue
-            
-            # Si sigue siendo un string simple (que no pudo ser parseado)
-            resultado[key] = str(value)
+            # Aseguramos que sea un string y lo limpiamos
+            resultado[key] = str(value).strip()
             continue
         
         # --- ESTRUCTURAS COMPLEJAS: DICCIONARIOS Y LISTAS ---
@@ -143,6 +111,7 @@ def a_texto_plano_mejorado(data: dict) -> dict:
         else:
             resultado[key] = str(value)
 
+        # Limpieza final de saltos de línea múltiples
         resultado[key] = re.sub(r'\n+', '\n', resultado[key]).strip()
 
     return resultado
@@ -178,21 +147,22 @@ prompt_template_rag = PromptTemplate(
 # 🆕 Se añaden las reglas completas para todos los campos para que la función principal funcione.
 REGLAS_POR_CAMPO = {
     "número de expediente": "- solo el número limpio, sin texto adicional.",
-    "cliente": "- Redacta de forma concisa la información de contacto y organización. Formato: Entidad: (...)\nResponsable: (...)\nForma de contacto: (...)\nTeléfono: (...)\nFax: (...)\nCorreo Electrónico: (...)\nSitio Web: (...)\nSede Electrónica: (...). No incluyas suplentes ni cargos secundarios. Si no existe un subcampo, omítelo.",
+    "cliente": "- nombre del cliente (entidad adjudicadora).",
     "clasificación CPV": "- Lista de códigos o descripciones CPV, uno por línea, precedido por un guion (-).",
-    "valor estimado del contrato": "- Importe total con y sin IVA, e indicar los ejercicios económicos si dura más de un año. Si no aparece, use (-).",
+    "valor estimado del contrato": "- Importe sin IVA, e indicar los ejercicios económicos si dura más de un año. Si no aparece, use (-).",
     "plazo de presentación de la oferta": "- **FORMATO ESTRICTO: DD/MM/AAAA a las HH:MM (Zona Horaria).** Extrae ÚNICAMENTE la fecha y hora LÍMITE para presentar ofertas (nunca la fecha de inicio o el plazo de ejecución del contrato). Si el formato de hora no está especificado, usa HH:MM 23:59. Si la Zona Horaria no está especificada, omítela.",
-    "criterios de valoración": "- Esquema detallado con bullets, separando claramente los criterios evaluables mediante fórmulas (automáticos) de los juicios de valor (discrecionales).",
+    "criterios de valoración": "- Esquema detallado con bullets, separando claramente los criterios evaluables mediante fórmulas (automáticos) de los juicios de valor (discrecionales). Añadir al final cómo obtener la máxima puntuación",
     "resumen de trabajos o servicios a contratar": "- Descripción concisa de los trabajos o servicios, en formato de lista con bullets.",
     "prórroga": "- Sí/No. Si es Sí, indicar duración total (Ejemplo: Sí, 2 años).",
-    "requisitos de solvencia técnica": "- Bullets con los requisitos. Incluir al final la referencia general a la página del documento de la licitación (Ejemplo: (Página 12-14)).",
-    "acreditación de solvencia técnica": "- Bullets con los documentos de acreditación. Incluir al final la referencia general a la página (Ejemplo: (Página 14)).",
-    "requisitos de solvencia económica": "- Bullets con los requisitos (Ejemplo: Volumen de negocio mínimo). Incluir al final la referencia general a la página (Ejemplo: (Página 15)).",
-    "acreditación de solvencia económica": "- Bullets con los documentos de acreditación. Incluir al final la referencia general a la página (Ejemplo: (Página 15)).",
+    "requisitos de solvencia técnica": "- Bullets con los requisitos (relación trabajos principales + ISOS necesarias). Incluir al final la referencia general a la página del documento de la licitación (Ejemplo: (Página 12-14)).",
+    "acreditación de solvencia técnica": "- Bullets con los documentos de acreditación (cómo se acreditan los requisitos de solvencia técnica). Incluir al final la referencia general a la página (Ejemplo: (Página 14)).",
+    "requisitos de solvencia económica": "- Bullets con los requisitos (volumen anual de negocio que se tiene que cumplir). Incluir al final la referencia general a la página (Ejemplo: (Página 15)).",
+    "acreditación de solvencia económica": "- Bullets con los documentos de acreditación (cómo se acreditan los requisitos de solvencia económica). Incluir al final la referencia general a la página (Ejemplo: (Página 15)).",
     "esquema nacional de seguridad": "- Sí/No. Si es Sí, indicar el nivel (Básico/Medio/Alto).",
-    "equipo de trabajo": "- Bullets, detallando formación, años de experiencia y roles clave. Incluir al final la referencia general a la página.",
-    "acreditación del equipo de trabajo": "- Bullets con los documentos de acreditación. Incluir al final la referencia general a la página.",
-    "documentación por sobre (contenido de sobres)": "- Bullets detallando el contenido requerido para cada sobre (Técnico, Económico, etc.). Incluir al final la referencia general a la página.",
+    "equipo de trabajo": "- Bullets, detallando formación, años de experiencia y roles clave (añadir en este apartado los medios materiales). Incluir al final la referencia general a la página.",
+    "acreditación del equipo de trabajo": "- Bullets con los documentos de acreditación (cómo se acreditan los requisitos del equipo de trabajo). Incluir al final la referencia general a la página.",
+    "documentación por sobre (contenido de sobres)": "- Bullets resumiendo el contenido requerido para cada sobre (Técnico, Económico, etc.)(No repetir información sobre la solvencia técnica o económica). Incluir al final la referencia general a la página.",
+    "¿cuándo se acredita la solvencia técnica?":" - Indicar el momento exacto (Indicar si se acredita en la licitación o en la adjudicación). Si no se especifica, usar (-).",
     "nombre carpeta": "- Solo el nombre de la carpeta (Ejemplo: 2024-001).",
 }
 
